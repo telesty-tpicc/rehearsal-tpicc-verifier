@@ -1,0 +1,46 @@
+# DRAFT v1 for the verifier repository (.github/workflows/ledger-tests.yml), REHEARSAL ONLY, never run. Owner adds it through the web UI.
+# Manual only (no schedule). The Owner copies ledger-lib.sh and ledger-scenarios.sh into ledger/ in the verifier repository first.
+# The writer key never leaves GitHub Actions; the scenarios run as the verifier App (the ledger-writer stub) against the target repository.
+name: ledger-tests
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: scenario to run
+        type: choice
+        options: [all_github, L6, L7, L8, L9, L10, L11, L12, L18, L19, L20, L21, chain, L5check, L16]
+        default: all_github
+      l16_confirm:
+        description: 'L16 only (destructive if misconfigured). Type exactly: I CONFIRM L16 NOW. Leave empty otherwise.'
+        type: string
+        default: ''
+permissions: {}
+concurrency: ledger-tests
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1      # v7.0.1 (same pin as promote.yml; re-verify before first commit)
+        with: {persist-credentials: false}
+      - id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510   # v3.3.0
+        with:
+          client-id: ${{ vars.VERIFIER_CLIENT_ID }}
+          private-key: ${{ secrets.VERIFIER_APP_KEY }}
+          owner: ${{ vars.TARGET_ORG }}
+          repositories: ${{ vars.TARGET_REPO }}
+          permission-contents: write
+          permission-metadata: read
+      - env:
+          L_TOKEN: ${{ steps.app.outputs.token }}
+          T: ${{ vars.TARGET_ORG }}/${{ vars.TARGET_REPO }}
+          SCENARIO: ${{ inputs.scenario }}
+          L16_CONFIRM: ${{ inputs.l16_confirm }}
+        run: |
+          set -euo pipefail
+          [ "$T" = "telesty-tpicc/rehearsal-tpicc-target" ] || { echo "refusing: target is not exactly telesty-tpicc/rehearsal-tpicc-target"; exit 1; }
+          export LEDGER_REMOTE="https://github.com/$T.git" RUN="gh${GITHUB_RUN_ID}"
+          git config --global user.email ledger-writer@example.invalid; git config --global user.name ledger-writer
+          # no token on any command line; the Actions runner also masks the App token in logs
+          bash ledger/ledger-scenarios.sh "$SCENARIO"

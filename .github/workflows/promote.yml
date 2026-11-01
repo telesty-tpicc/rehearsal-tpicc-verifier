@@ -1,9 +1,6 @@
-# DRAFT v2 stub verifier for the M1 REHEARSAL only. It proves the GitHub controls, not the Mission Authorization verifier.
-# Rule: for each full SHA the Owner lists in approved-shas.txt (a file in THIS repository that only the Owner can write):
-#   1. the SHA must be the tip of an agent/* branch of the target repository (so arbitrary or fork-only commits are never promoted);
-#   2. the verifier posts the pinned status rehearsal/verified on that SHA;
-#   3. if main is an ancestor of the SHA (fast-forward) the verifier moves main to it, never forced. Anything else: log and do nothing.
-# Actions are pinned to full commit SHAs resolved read-only on 2026-11-01; re-verify them before the first commit.
+# DRAFT v2 stub verifier (REHEARSAL ONLY, never run). Differs from promote.yml (v1) in ONE respect, to fix M1a finding 5 / test L17:
+# the fast-forward check now happens BEFORE the status is posted, so a green rehearsal/verified status can never exist on a commit that
+# is not promoted (v1 posted the status first and left a green status on a diverging branch).
 name: promote
 on:
   schedule: [{cron: '*/10 * * * *'}]
@@ -35,11 +32,12 @@ jobs:
           tips=$(gh api "repos/$T/git/matching-refs/heads/agent/" --jq '.[].object.sha' || true)
           { grep -E '^[0-9a-f]{40}$' approved-shas.txt || true; } | while read -r sha; do
             printf '%s\n' "$tips" | grep -qx "$sha" || { echo "skip $sha: not the tip of an agent/* branch"; continue; }
-            gh api -X POST "repos/$T/statuses/$sha" -f state=success -f context=rehearsal/verified -f description="stub verifier: Owner-listed SHA" >/dev/null
             main=$(gh api "repos/$T/git/ref/heads/main" --jq .object.sha)
+            if [ "$sha" != "$main" ]; then
+              st=$(gh api "repos/$T/compare/$main...$sha" --jq .status)
+              [ "$st" = "ahead" ] || { echo "not a fast-forward ($st): $sha  (no status posted)"; continue; }
+            fi
+            gh api -X POST "repos/$T/statuses/$sha" -f state=success -f context=rehearsal/verified -f description="stub verifier: Owner-listed SHA" >/dev/null
             [ "$sha" = "$main" ] && { echo "already main: $sha"; continue; }
-            st=$(gh api "repos/$T/compare/$main...$sha" --jq .status)
-            if [ "$st" = "ahead" ]; then
-              gh api -X PATCH "repos/$T/git/refs/heads/main" -f sha="$sha" -F force=false >/dev/null && echo "promoted $sha"
-            else echo "not a fast-forward ($st): $sha"; fi
+            gh api -X PATCH "repos/$T/git/refs/heads/main" -f sha="$sha" -F force=false >/dev/null && echo "promoted $sha"
           done

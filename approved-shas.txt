@@ -1,0 +1,1 @@
+# Owner-edited ONLY. One full commit SHA per line = commits the stub verifier may promote to main.

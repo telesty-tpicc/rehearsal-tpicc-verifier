@@ -1,0 +1,45 @@
+# DRAFT v2 stub verifier for the M1 REHEARSAL only. It proves the GitHub controls, not the Mission Authorization verifier.
+# Rule: for each full SHA the Owner lists in approved-shas.txt (a file in THIS repository that only the Owner can write):
+#   1. the SHA must be the tip of an agent/* branch of the target repository (so arbitrary or fork-only commits are never promoted);
+#   2. the verifier posts the pinned status rehearsal/verified on that SHA;
+#   3. if main is an ancestor of the SHA (fast-forward) the verifier moves main to it, never forced. Anything else: log and do nothing.
+# Actions are pinned to full commit SHAs resolved read-only on 2026-11-01; re-verify them before the first commit.
+name: promote
+on:
+  schedule: [{cron: '*/10 * * * *'}]
+  workflow_dispatch:
+permissions: {}
+concurrency: promote
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1      # v7.0.1
+        with: {persist-credentials: false}
+      - id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510   # v3.3.0
+        with:
+          client-id: ${{ vars.VERIFIER_CLIENT_ID }}
+          private-key: ${{ secrets.VERIFIER_APP_KEY }}
+          owner: ${{ vars.TARGET_ORG }}
+          repositories: ${{ vars.TARGET_REPO }}
+          permission-contents: write
+          permission-statuses: write
+          permission-metadata: read
+      - env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          T: ${{ vars.TARGET_ORG }}/${{ vars.TARGET_REPO }}
+        run: |
+          set -euo pipefail
+          case "${T#*/}" in rehearsal-*) ;; *) echo "refusing: target is not a rehearsal repository"; exit 1;; esac
+          tips=$(gh api "repos/$T/git/matching-refs/heads/agent/" --jq '.[].object.sha' || true)
+          { grep -E '^[0-9a-f]{40}$' approved-shas.txt || true; } | while read -r sha; do
+            printf '%s\n' "$tips" | grep -qx "$sha" || { echo "skip $sha: not the tip of an agent/* branch"; continue; }
+            gh api -X POST "repos/$T/statuses/$sha" -f state=success -f context=rehearsal/verified -f description="stub verifier: Owner-listed SHA" >/dev/null
+            main=$(gh api "repos/$T/git/ref/heads/main" --jq .object.sha)
+            [ "$sha" = "$main" ] && { echo "already main: $sha"; continue; }
+            st=$(gh api "repos/$T/compare/$main...$sha" --jq .status)
+            if [ "$st" = "ahead" ]; then
+              gh api -X PATCH "repos/$T/git/refs/heads/main" -f sha="$sha" -F force=false >/dev/null && echo "promoted $sha"
+            else echo "not a fast-forward ($st): $sha"; fi
+          done

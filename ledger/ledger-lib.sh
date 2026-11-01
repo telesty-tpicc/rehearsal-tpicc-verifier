@@ -28,6 +28,11 @@ l_sync() { l_git -C "$1" fetch -q origin "$2" 2>/dev/null && git -C "$1" reset -
 l_push_class() { # stdin: push output -> RULE | RACE | OTHER
   local o; o=$(cat); if printf '%s' "$o" | grep -Eiq 'GH013|rule violation|protected branch|not permitted|permission|403'; then echo RULE
   elif printf '%s' "$o" | grep -Eiq 'non-fast-forward|fetch first|stale info|failed to update ref|cannot lock ref'; then echo RACE; else echo OTHER; fi; }
+# l_lost_race DIR BRANCH : GitHub reports a lost compare-and-swap on a ruleset-protected branch as a RULE violation (run #3, 2026-11-01),
+# indistinguishable by message from a real rule refusal. Disambiguate by the tip: if the remote tip is no longer the parent we built on, we lost a
+# race (retry from a fresh fetch, re-running every check); if it is unchanged, the rule really refused us. An unreadable tip fails closed.
+l_lost_race() { local tip parent; tip=$(l_git -C "$1" ls-remote origin "refs/heads/$2" 2>/dev/null | cut -f1) || return 1; [ -n "$tip" ] || return 1
+  parent=$(git -C "$1" rev-parse HEAD~1 2>/dev/null) || return 1; [ "$tip" != "$parent" ]; }
 # l_append DIR TYPE KEY MISSION DIGEST WHO  -> prints OUTCOME, returns 0 ok | 10 replay | 11 revoked | 12 conflict | 13 no-claim | 20 push/fetch failed | 21 refused by rule
 l_append() {
   local d=$1 type=$2 key=$3 mission=$4 digest=$5 who=$6 tries=0 rec seq prev hash line out cls
@@ -62,7 +67,7 @@ l_append() {
     git -C "$d" add -A && git -C "$d" commit -qm "ledger: $type $key"
     out=$(l_git -C "$d" push -q origin "HEAD:refs/heads/$L_CLAIMS" 2>&1 </dev/null) && { echo APPENDED; return 0; }
     cls=$(printf '%s' "$out" | l_push_class)
-    [ "$cls" = RULE ] && { echo REFUSED_BY_RULE; return 21; }
+    if [ "$cls" = RULE ]; then l_lost_race "$d" "$L_CLAIMS" && continue; echo REFUSED_BY_RULE; return 21; fi
     [ "$cls" = RACE ] || { echo "PUSH_FAILED"; return 20; }
   done
   echo RETRIES_EXHAUSTED; return 20
@@ -82,7 +87,9 @@ l_act() {
     [ -e "$d/acts/$key" ] && { echo ALREADY; return 0; }
     mkdir -p "$d/acts"; echo "acted $key" > "$d/acts/$key"; git -C "$d" add -A && git -C "$d" commit -qm "act $key"
     out=$(l_git -C "$d" push -q origin "HEAD:refs/heads/$L_ORDERS" 2>&1 </dev/null) && { echo ACTED; return 0; }
-    cls=$(printf '%s' "$out" | l_push_class); [ "$cls" = RULE ] && { echo REFUSED_BY_RULE; return 21; }; [ "$cls" = RACE ] || { echo PUSH_FAILED; return 20; }
+    cls=$(printf '%s' "$out" | l_push_class)
+    if [ "$cls" = RULE ]; then l_lost_race "$d" "$L_ORDERS" && continue; echo REFUSED_BY_RULE; return 21; fi
+    [ "$cls" = RACE ] || { echo PUSH_FAILED; return 20; }
   done; echo RETRIES_EXHAUSTED; return 20
 }
 # l_reconcile CLAIMSDIR ORDERSDIR : every claim without a complete gets its action (once) and a complete entry

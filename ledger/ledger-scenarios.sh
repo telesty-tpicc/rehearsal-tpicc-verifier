@@ -99,7 +99,15 @@ sc_L22_local() { # unreachable remote: every operation fails closed, nothing act
   local d key o rc; d=$(dir d22); key=$(l_hash "n22-$RUN"); git -C "$d" remote set-url origin "$T/does-not-exist.git"
   o=$(l_append "$d" claim "$key" "m22-$RUN" dig w); rc=$?
   [ "$o" = FETCH_FAILED ] && [ $rc -eq 20 ] || die L22 "did not fail closed: $o rc=$rc"; pass L22_local "unreachable remote fails closed"; }
-sc_all_local() { sc_L6; sc_L7; sc_L8; sc_L9; sc_L10; sc_L11; sc_L12; sc_L18; sc_L19; sc_L20; sc_L21; sc_L22_local; sc_chain; sc_L13_local; }
+sc_L23_local() { # LOCAL ONLY: a REAL rule refusal (tip unchanged) must still be refused, not retried forever or turned into success
+  [ "${L_LOCAL_TEST:-}" = 1 ] || die L23 "local only"
+  local d key o rc h="$LEDGER_REMOTE/hooks/update"; key=$(l_hash "n23-$RUN"); d=$(dir d23)
+  cp "$h" "$h.keep" 2>/dev/null; printf '#!/bin/sh\necho "remote: error: GH013: Repository rule violations found" >&2\necho "remote: - Cannot update this protected ref." >&2\nexit 1\n' > "$h"; chmod +x "$h"
+  o=$(L_RETRIES=4 l_append "$d" claim "$key" "m23-$RUN" dig-23 w); rc=$?
+  if [ -f "$h.keep" ]; then mv "$h.keep" "$h"; else rm -f "$h"; fi
+  [ "$o" = REFUSED_BY_RULE ] && [ $rc -eq 21 ] || die L23 "real rule refusal not reported as refused: $o rc=$rc"
+  l_sync "$d" "$L_CLAIMS"; [ ! -e "$d/claims/$key.json" ] || die L23 "claim landed despite the refusal"; pass L23_local "real rule refusal still refused"; }
+sc_all_local() { sc_L6; sc_L7; sc_L8; sc_L9; sc_L10; sc_L11; sc_L12; sc_L18; sc_L19; sc_L20; sc_L21; sc_L22_local; sc_L23_local; sc_chain; sc_L13_local; }
 # L16 is deliberately NOT part of all_github: it is run alone, after the Owner's separate confirmation.
 sc_all_github() { sc_L6; sc_L7; sc_L8; sc_L9; sc_L10; sc_L11; sc_L12; sc_L18; sc_L19; sc_L20; sc_L21; sc_chain; sc_L5check; }
 for s in "$@"; do declare -F "sc_$s" >/dev/null || { echo "unknown scenario $s"; exit 2; }; "sc_$s"; done

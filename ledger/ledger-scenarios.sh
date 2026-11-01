@@ -107,7 +107,15 @@ sc_L23_local() { # LOCAL ONLY: a REAL rule refusal (tip unchanged) must still be
   if [ -f "$h.keep" ]; then mv "$h.keep" "$h"; else rm -f "$h"; fi
   [ "$o" = REFUSED_BY_RULE ] && [ $rc -eq 21 ] || die L23 "real rule refusal not reported as refused: $o rc=$rc"
   l_sync "$d" "$L_CLAIMS"; [ ! -e "$d/claims/$key.json" ] || die L23 "claim landed despite the refusal"; pass L23_local "real rule refusal still refused"; }
-sc_all_local() { sc_L6; sc_L7; sc_L8; sc_L9; sc_L10; sc_L11; sc_L12; sc_L18; sc_L19; sc_L20; sc_L21; sc_L22_local; sc_L23_local; sc_chain; sc_L13_local; }
+sc_L24() { # reconcile must not record "complete" for a claim whose action was refused (revoked mission)
+  local key d od o; key=$(l_hash "n24-$RUN"); d=$(dir c24); od=$(dir o24 "$L_ORDERS")
+  [ "$(l_append "$d" claim "$key" "m24-$RUN" dig-24 w)" = APPENDED ] || die L24 "claim"
+  [ "$(l_append "$d" revoke "m24-$RUN" "m24-$RUN" - owner)" = APPENDED ] || die L24 "revoke"
+  o=$(l_reconcile "$d" "$od"); l_sync "$d" "$L_CLAIMS"; l_sync "$od" "$L_ORDERS"
+  [ ! -e "$od/acts/$key" ] || die L24 "action performed for a revoked mission"
+  [ "$(awk -F'|' -v k="$key" '$2=="complete"&&$3==k' "$d/chain.log" | wc -l | tr -d ' ')" = 0 ] || die L24 "complete recorded for a refused action"
+  pass L24 "refused action left unrecorded as complete ($o)"; }
+sc_all_local() { sc_L6; sc_L7; sc_L8; sc_L9; sc_L10; sc_L11; sc_L12; sc_L18; sc_L19; sc_L20; sc_L21; sc_L22_local; sc_L23_local; sc_L24; sc_chain; sc_L13_local; }
 # L16 is deliberately NOT part of all_github: it is run alone, after the Owner's separate confirmation.
-sc_all_github() { sc_L6; sc_L7; sc_L8; sc_L9; sc_L10; sc_L11; sc_L12; sc_L18; sc_L19; sc_L20; sc_L21; sc_chain; sc_L5check; }
+sc_all_github() { sc_L6; sc_L7; sc_L8; sc_L9; sc_L10; sc_L11; sc_L12; sc_L18; sc_L19; sc_L20; sc_L21; sc_L24; sc_chain; sc_L5check; }
 for s in "$@"; do declare -F "sc_$s" >/dev/null || { echo "unknown scenario $s"; exit 2; }; "sc_$s"; done

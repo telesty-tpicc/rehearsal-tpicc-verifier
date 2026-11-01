@@ -92,13 +92,15 @@ l_act() {
     [ "$cls" = RACE ] || { echo PUSH_FAILED; return 20; }
   done; echo RETRIES_EXHAUSTED; return 20
 }
-# l_reconcile CLAIMSDIR ORDERSDIR : every claim without a complete gets its action (once) and a complete entry
+# l_reconcile CLAIMSDIR ORDERSDIR : every claim without a complete gets its action (once) and, ONLY if the action happened (ACTED/ALREADY), a complete entry.
+# A refused action (revoked mission, missing claim, rule) is NOT recorded as complete: the claim stays an visible orphan (finding R-7, run #4:
+# 20 claims of revoked missions had been marked complete although their action was correctly refused).
 l_reconcile() {
-  local cd=$1 od=$2 key who n=0; l_sync "$cd" "$L_CLAIMS" || return 20
+  local cd=$1 od=$2 key r n=0 k=0; l_sync "$cd" "$L_CLAIMS" || return 20
   for key in $(awk -F'|' '$2=="claim"{c[$3]=1}$2=="complete"{delete c[$3]}END{for(k in c)print k}' "$cd/chain.log"); do
-    who=$(awk -F'|' -v k="$key" '$2=="claim"&&$3==k{print $6}' "$cd/chain.log")
-    l_act "$od" "$key" "$cd" >/dev/null; l_append "$cd" complete "$key" "-" "-" "reconcile" >/dev/null; n=$((n+1))
-  done; echo "RECONCILED $n"
+    r=$(l_act "$od" "$key" "$cd")
+    case $r in ACTED|ALREADY) l_append "$cd" complete "$key" "-" "-" "reconcile" >/dev/null; n=$((n+1));; *) k=$((k+1));; esac
+  done; echo "RECONCILED $n SKIPPED $k"
 }
 # l_verify DIR : recompute the whole hash chain in bash (chain content is never given to a shell or awk system()). prints OK <count> | BAD <seq>
 l_verify() {
